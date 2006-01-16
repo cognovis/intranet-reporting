@@ -43,9 +43,49 @@ BEGIN
         null,                   -- context_id
         ''intranet-reporting'', -- package_name
         ''reporting-finance-quotes-pos'',          -- label
-        ''Finance Quotes &amp; POs'',          -- name
+        ''Finance Quotes & POs'',          -- name
         ''/intranet-reporting/finance-quotes-pos'', -- url
         30,                    -- sort_order
+        v_main_menu,            -- parent_menu_id
+        null                    -- p_visible_tcl
+    );
+
+    PERFORM acs_permission__grant_permission(v_menu, v_admins, ''read'');
+    PERFORM acs_permission__grant_permission(v_menu, v_senman, ''read'');
+    PERFORM acs_permission__grant_permission(v_menu, v_accounting, ''read'');
+
+    v_menu := im_menu__new (
+        null,                   -- p_menu_id
+        ''acs_object'',         -- object_type
+        now(),                  -- creation_date
+        null,                   -- creation_user
+        null,                   -- creation_ip
+        null,                   -- context_id
+        ''intranet-reporting'', -- package_name
+        ''reporting-finance-payment-balance'',          -- label
+        ''Finance Payment Balance'',          -- name
+        ''/intranet-reporting/finance-payment-balance'', -- url
+        40,                    -- sort_order
+        v_main_menu,            -- parent_menu_id
+        null                    -- p_visible_tcl
+    );
+
+    PERFORM acs_permission__grant_permission(v_menu, v_admins, ''read'');
+    PERFORM acs_permission__grant_permission(v_menu, v_senman, ''read'');
+    PERFORM acs_permission__grant_permission(v_menu, v_accounting, ''read'');
+
+    v_menu := im_menu__new (
+        null,                   -- p_menu_id
+        ''acs_object'',         -- object_type
+        now(),                  -- creation_date
+        null,                   -- creation_user
+        null,                   -- creation_ip
+        null,                   -- context_id
+        ''intranet-reporting'', -- package_name
+        ''reporting-finance-revenues'',          -- label
+        ''Finance Revenues'',          -- name
+        ''/intranet-reporting/finance-revenues'', -- url
+        50,                    -- sort_order
         v_main_menu,            -- parent_menu_id
         null                    -- p_visible_tcl
     );
