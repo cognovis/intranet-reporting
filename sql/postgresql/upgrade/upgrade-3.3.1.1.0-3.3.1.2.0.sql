@@ -29,7 +29,7 @@ begin
 		''acs_object'',			-- supertype
 		''im_reports'',			-- table_name
 		''report_id'',			-- id_column
-		''im_reports'',			-- package_name
+		''intranet-reporting'',		-- package_name
 		''f'',				-- abstract_p
 		null,				-- type_extension_table
 		''im_report__name''		-- name_method
