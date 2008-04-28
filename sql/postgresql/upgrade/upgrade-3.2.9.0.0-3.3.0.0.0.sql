@@ -1,3 +1,5 @@
+-- upgrade-3.2.9.0.0-3.3.0.0.0.sql
+
 
 -----------------------------------------------------------
 -- Reports
@@ -5,8 +7,7 @@
 -- Table for user-defined reports. Types:
 --	- SQL Report - Simply show the result of an SQL statement via im_ad_hoc_query
 --	- ... (more types of reports possibly in the future).
-
-
+--
 SELECT acs_object_type__create_type (
 	'im_report',			-- object_type
 	'Report',			-- pretty_name
@@ -61,11 +62,8 @@ DECLARE
 	p_report_id		alias for $1;
 	v_name			varchar(2000);
 BEGIN
-	select	report_name
-	into	v_name
-	from	im_reports
+	select	report_name into v_name from im_reports
 	where	report_id = p_report_id;
-
 	return v_name;
 end;' language 'plpgsql';
 
@@ -88,8 +86,13 @@ DECLARE
 	p_report_menu_id	alias for $10;
 	p_report_sql		alias for $11;
 
-	v_report_id	integer;
+	v_report_id		integer;
+	v_count			integer;
 BEGIN
+	select count(*) into v_count from im_reports
+	where report_name = p_report_name;
+	if v_count > 0 then return 0; end if;
+
 	v_report_id := acs_object__new (
 		p_report_id,		-- object_id
 		p_object_type,		-- object_type
@@ -149,14 +152,11 @@ end;' language 'plpgsql';
 -- 15200-15999	Reserved for Reporting
 
 
-insert into im_categories(category_id, category, category_type) 
-values (15000, 'Active', 'Intranet Report Status');
-insert into im_categories(category_id, category, category_type) 
-values (15002, 'Deleted', 'Intranet Report Status');
+SELECT im_category_new(15000, 'Active', 'Intranet Report Status');
+SELECT im_category_new(15002, 'Deleted', 'Intranet Report Status');
 
-
-insert into im_categories(category_id, category, category_type) 
-values (15100, 'Simple SQL Report', 'Intranet Report Type');
+SELECT im_category_new(15100, 'Simple SQL Report', 'Intranet Report Type');
+SELECT im_category_new(15110, 'Indicator', 'Intranet Report Type');
 
 
 -----------------------------------------------------------
@@ -176,4 +176,65 @@ where	category_type = 'Intranet Report Type'
 	and (enabled_p is null or enabled_p = 't');
 
 
+------------------------------------------------------------------------------
+--
+------------------------------------------------------------------------------
+
+
+
+create or replace function inline_0 ()
+returns integer as '
+declare
+	-- Menu IDs
+	v_menu		  integer;
+	v_main_menu	     integer;
+
+	-- Groups
+	v_employees	     integer;
+	v_accounting	    integer;
+	v_senman		integer;
+	v_customers	     integer;
+	v_freelancers	   integer;
+	v_proman		integer;
+	v_admins		integer;
+	v_reg_users	     integer;
+BEGIN
+	select group_id into v_admins from groups where group_name = ''P/O Admins'';
+	select group_id into v_senman from groups where group_name = ''Senior Managers'';
+	select group_id into v_proman from groups where group_name = ''Project Managers'';
+	select group_id into v_accounting from groups where group_name = ''Accounting'';
+	select group_id into v_employees from groups where group_name = ''Employees'';
+	select group_id into v_customers from groups where group_name = ''Customers'';
+	select group_id into v_freelancers from groups where group_name = ''Freelancers'';
+	select group_id into v_reg_users from groups where group_name = ''Registered Users'';
+
+	select menu_id
+	into v_main_menu
+	from im_menus
+	where label=''reporting-timesheet'';
+
+	v_menu := im_menu__new (
+		null,				   -- p_menu_id
+		''acs_object'',			 -- object_type
+		now(),				  -- creation_date
+		null,				   -- creation_user
+		null,				   -- creation_ip
+		null,				   -- context_id
+		''intranet-reporting'',	 -- package_name
+		''reporting-timesheet-finance'', -- label
+		''Timesheet Project Hierarchy & Finance'', -- name
+		''/intranet-reporting/timesheet-finance?'', -- url
+		5,				      -- sort_order
+		v_main_menu,			    -- parent_menu_id
+		null				    -- p_visible_tcl
+	);
+
+	PERFORM acs_permission__grant_permission(v_menu, v_admins, ''read'');
+	PERFORM acs_permission__grant_permission(v_menu, v_senman, ''read'');
+	PERFORM acs_permission__grant_permission(v_menu, v_accounting, ''read'');
+
+	return 0;
+end;' language 'plpgsql';
+select inline_0 ();
+drop function inline_0 ();
 
