@@ -1,5 +1,6 @@
 -- upgrade-3.2.9.0.0-3.3.0.0.0.sql
 
+SELECT acs_log__debug('/packages/intranet-reporting/sql/postgresql/upgrade/upgrade-3.2.9.0.0-3.3.0.0.0.sql','');
 
 -----------------------------------------------------------
 -- Reports
@@ -8,44 +9,65 @@
 --	- SQL Report - Simply show the result of an SQL statement via im_ad_hoc_query
 --	- ... (more types of reports possibly in the future).
 --
-SELECT acs_object_type__create_type (
-	'im_report',			-- object_type
-	'Report',			-- pretty_name
-	'Reports',			-- pretty_plural
-	'acs_object',			-- supertype
-	'im_reports',			-- table_name
-	'report_id',			-- id_column
-	'im_reports',			-- package_name
-	'f',				-- abstract_p
-	null,				-- type_extension_table
-	'im_report__name'		-- name_method
-);
+create or replace function inline_0 ()
+returns integer as '
+declare
+	v_count			integer;
+	v_menu_id		integer;
+begin
+	select  count(*) into v_count from acs_object_types
+	where   object_type = ''im_report'';
+	IF v_count > 0 THEN return 0; END IF;
+	
+	SELECT acs_object_type__create_type (
+		''im_report'',			-- object_type
+		''Report'',			-- pretty_name
+		''Reports'',			-- pretty_plural
+		''acs_object'',			-- supertype
+		''im_reports'',			-- table_name
+		''report_id'',			-- id_column
+		''intranet-reporting'',		-- package_name
+		''f'',				-- abstract_p
+		null,				-- type_extension_table
+		''im_report__name''		-- name_method
+	);
+	
 
-
-create table im_reports (
-	report_id		integer
-				constraint im_report_id_pk
-				primary key
-				constraint im_report_id_fk
-				references acs_objects,
-	report_name		varchar(1000),
-	report_status_id	integer 
-				constraint im_report_status_nn
-				not null
-				constraint im_report_status_fk
-				references im_categories,
-	report_type_id		integer 
-				constraint im_report_type_nn
-				not null
-				constraint im_report_type_fk
-				references im_categories,
-	report_menu_id		integer
-				constraint im_report_menu_id_fk
-				references im_menus,
-	report_sql		text
-				constraint im_report_report_nn
-				not null
-);
+	create table im_reports (
+		report_id		integer
+					constraint im_report_id_pk
+					primary key
+					constraint im_report_id_fk
+					references acs_objects,
+		report_name		varchar(1000),
+		report_status_id	integer 
+					constraint im_report_status_nn
+					not null
+					constraint im_report_status_fk
+					references im_categories,
+		report_type_id		integer 
+					constraint im_report_type_nn
+					not null
+					constraint im_report_type_fk
+					references im_categories,
+		report_sort_order	integer,
+		report_menu_id		integer
+					constraint im_report_menu_id_fk
+					references im_menus,
+		report_sql		text
+					constraint im_report_report_nn
+					not null,
+		report_description	text
+	);
+	
+	alter table im_reports add
+		constraint im_reports_name_un
+		unique(report_name);
+	
+    return 0;
+end;' language 'plpgsql';
+select inline_0 ();
+drop function inline_0();
 
 
 
@@ -186,18 +208,18 @@ create or replace function inline_0 ()
 returns integer as '
 declare
 	-- Menu IDs
-	v_menu		  integer;
-	v_main_menu	     integer;
+	v_menu			integer;
+	v_main_menu		integer;
 
 	-- Groups
-	v_employees	     integer;
-	v_accounting	    integer;
+	v_employees		integer;
+	v_accounting		integer;
 	v_senman		integer;
-	v_customers	     integer;
-	v_freelancers	   integer;
+	v_customers		integer;
+	v_freelancers		integer;
 	v_proman		integer;
 	v_admins		integer;
-	v_reg_users	     integer;
+	v_reg_users		integer;
 BEGIN
 	select group_id into v_admins from groups where group_name = ''P/O Admins'';
 	select group_id into v_senman from groups where group_name = ''Senior Managers'';
@@ -208,25 +230,23 @@ BEGIN
 	select group_id into v_freelancers from groups where group_name = ''Freelancers'';
 	select group_id into v_reg_users from groups where group_name = ''Registered Users'';
 
-	select menu_id
-	into v_main_menu
-	from im_menus
+	select menu_id into v_main_menu from im_menus
 	where label=''reporting-timesheet'';
 
 	v_menu := im_menu__new (
-		null,				   -- p_menu_id
-		''acs_object'',			 -- object_type
-		now(),				  -- creation_date
-		null,				   -- creation_user
-		null,				   -- creation_ip
-		null,				   -- context_id
-		''intranet-reporting'',	 -- package_name
-		''reporting-timesheet-finance'', -- label
+		null,					-- p_menu_id
+		''acs_object'',				-- object_type
+		now(),					-- creation_date
+		null,					-- creation_user
+		null,					-- creation_ip
+		null,					-- context_id
+		''intranet-reporting'',			-- package_name
+		''reporting-timesheet-finance'',	-- label
 		''Timesheet Project Hierarchy & Finance'', -- name
 		''/intranet-reporting/timesheet-finance?'', -- url
-		5,				      -- sort_order
-		v_main_menu,			    -- parent_menu_id
-		null				    -- p_visible_tcl
+		5,					-- sort_order
+		v_main_menu,				-- parent_menu_id
+		null					-- p_visible_tcl
 	);
 
 	PERFORM acs_permission__grant_permission(v_menu, v_admins, ''read'');

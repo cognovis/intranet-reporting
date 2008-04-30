@@ -1,5 +1,7 @@
 -- upgrade-3.3.1.1.0-3.3.1.2.0.sql
 
+SELECT acs_log__debug('/packages/intranet-reporting/sql/postgresql/upgrade/upgrade-3.3.1.1.0-3.3.1.2.0.sql','');
+
 
 -----------------------------------------------------------
 -- Reports
@@ -7,20 +9,16 @@
 -- Table for user-defined reports. Types:
 --	- SQL Report - Simply show the result of an SQL statement via im_ad_hoc_query
 --	- ... (more types of reports possibly in the future).
-
-
-
+--
 create or replace function inline_0 ()
 returns integer as '
 declare
-        v_count                 integer;
-        v_menu_id               integer;
+	v_count			integer;
+	v_menu_id		integer;
 begin
-        select  count(*) into v_count
-        from    acs_object_types
-        where   object_type = ''im_report'';
-	IF v_count > 0 THEN return 0 END IF;
-
+	select  count(*) into v_count from acs_object_types
+	where   object_type = ''im_report'';
+	IF v_count > 0 THEN return 0; END IF;
 	
 	SELECT acs_object_type__create_type (
 		''im_report'',			-- object_type
