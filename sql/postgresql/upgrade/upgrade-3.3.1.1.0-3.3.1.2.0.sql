@@ -20,7 +20,7 @@ begin
 	where   object_type = ''im_report'';
 	IF v_count > 0 THEN return 0; END IF;
 	
-	SELECT acs_object_type__create_type (
+	PERFORM acs_object_type__create_type (
 		''im_report'',			-- object_type
 		''Report'',			-- pretty_name
 		''Reports'',			-- pretty_plural
