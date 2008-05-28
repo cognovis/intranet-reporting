@@ -40,6 +40,7 @@ begin
 					primary key
 					constraint im_report_id_fk
 					references acs_objects,
+		report_code             varchar(100),
 		report_name		varchar(1000),
 		report_status_id	integer 
 					constraint im_report_status_nn
@@ -61,6 +62,13 @@ begin
 		report_description	text
 	);
 	
+
+
+
+
+
+
+
 	alter table im_reports add
 		constraint im_reports_name_un
 		unique(report_name);
