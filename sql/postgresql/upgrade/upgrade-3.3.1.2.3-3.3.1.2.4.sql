@@ -31,9 +31,9 @@ CREATE OR REPLACE FUNCTION im_get_hours_percentage(int4, int4, "varchar")
         v_user_id	ALIAS FOR $1;
         v_project_id    ALIAS FOR $2;
         v_day_substring ALIAS FOR $3;
-        v_hours_project NUMERIC (5,2);
-        v_hours_total   NUMERIC (5,2);
-        v_result   	NUMERIC (5,2);
+        v_hours_project NUMERIC (10,2);
+        v_hours_total   NUMERIC (10,2);
+        v_result   	NUMERIC (10,2);
     BEGIN
         select sum(hours) into v_hours_project from im_hours where user_id = v_user_id and project_id = v_project_id and substring (day from 1 for 7) = v_day_substring; 
         select sum(hours) into v_hours_total from im_hours where user_id = v_user_id and substring (day from 1 for 7) = v_day_substring; 
