@@ -12,7 +12,7 @@ begin
         select group_id into v_group_sm from groups where group_name = ''Senior Managers'';
 
         select menu_id into v_parent_menu
-        from im_menus where label = ''projects_admin'';
+        from im_menus where label = ''reporting-finance'';
 
         v_menu := im_menu__new (
                 null,                                   -- p_menu_id
@@ -24,7 +24,7 @@ begin
                 ''intranet-reporting'',   -- package_name
                 ''reporting-timesheet-productivity-calendar-view-workdays'', -- label
                 ''Timesheet Productivity Report (Calendar View)'',      -- name
-                ''/intranet-reporting/intranet-reporting/timesheet-productivity-calendar-view-workdays.tcl'',   -- url
+                ''/intranet-reporting/timesheet-productivity-calendar-view-workdays.tcl'',   -- url
                 100,                                    -- sort_order
                 v_parent_menu,                          -- parent_menu_id
                 null                                    -- p_visible_tcl
