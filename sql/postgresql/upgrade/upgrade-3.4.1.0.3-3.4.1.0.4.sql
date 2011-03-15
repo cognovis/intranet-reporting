@@ -12,7 +12,7 @@ begin
         select group_id into v_group_sm from groups where group_name = ''Senior Managers'';
 
         select menu_id into v_parent_menu
-        from im_menus where label = ''reporting-finance'';
+        from im_menus where label = ''projects_admin'';
 
         v_menu := im_menu__new (
                 null,                                   -- p_menu_id
