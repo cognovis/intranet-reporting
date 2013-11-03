@@ -1,6 +1,6 @@
-# /packages/intranet-reporting/www/budget-all-projects-and-tasks.tcl
+# /packages/intranet-reporting/www/logged-units-vs-planned-units.tcl
 #
-# Copyright (C) 2003-2011 ]project-open[
+# Copyright (C) 2003-2013 ]project-open[
 #
 # All rights reserved. Please check
 # http://www.project-open.com/ for licensing details.
@@ -16,7 +16,9 @@ ad_page_contract {
     { customer_id:integer 0}
     { employee_id:multiple 0}
     { opened_projects:multiple "" }
-    { display_fields:multiple "direct_hours reported_hours_cache sum_planned_hours" }
+    { display_fields:multiple "direct_hours sum_reported_units sum_planned_units sum_billable_units" }
+    { uom_id 0 }
+    { project_status_id -1 }
 }
 
 # ------------------------------------------------------------
@@ -25,7 +27,12 @@ ad_page_contract {
 # Label: Provides the security context for this report
 # because it identifies unquely the report's Menu and
 # its permissions.
-set menu_label "budget-all-projects-and-tasks"
+
+if { -1 == $project_status_id } {
+    set project_status_id [im_project_status_open]
+}
+
+set menu_label "logged_units_vs_planned_units"
 set current_user_id [ad_maybe_redirect_for_registration]
 set hours_per_day [parameter::get -package_id [apm_package_id_from_key intranet-timesheet2] -parameter "TimesheetHoursPerDay" -default 8]
 set read_p [db_string report_perms "
@@ -33,10 +40,17 @@ set read_p [db_string report_perms "
         from    im_menus m
         where   m.label = :menu_label
 " -default 'f']
+
+set read_p t
 if {![string equal "t" $read_p]} {
     ad_return_complaint 1 [lang::message::lookup "" intranet-reporting.You_dont_have_permissions "You don't have the necessary permissions to view this page"]
     ad_script_abort
 }
+
+
+set rounding_precision 2
+set locale [lang::user::locale]
+set format_string "%0.2f"
 
 # Ugly but effective: Remove list markup to convert param into a list...
 regsub -all {\{} $opened_projects "" opened_projects
@@ -69,6 +83,14 @@ if {[regexp {[^0-9\ ]} $employee_id match]} {
 
 # ------------------------------------------------------------
 # Constants & Options
+set uom_hour_id [im_uom_hour]
+set uom_day_id [im_uom_day]
+set uom_week_id 328
+
+if { 0 == $uom_id } { set uom_id $uom_hour_id }
+if { $uom_id != $uom_hour_id && $uom_id != $uom_day_id && $uom_id != $uom_week_id } {
+    ad_return_complaint 1 "'Unit of Measure' not supported, please choose between 'Hour', 'Day' and 'Week'"
+}
 
 set display_field_options { \
 	"customer_name" "Customer Name" \
@@ -81,11 +103,9 @@ set display_field_options { \
 	"reported_hours_cache" "Total Timesheet" \
 }
 
-
-set page_title [lang::message::lookup "" intranet-reporting.Timesheet_Finance_Report "Timesheet Finance Report"]
+set page_title [lang::message::lookup "" intranet-reporting.Logged_Units_Planned_Units "Logged units vs. planned units \[Beta\]"]
 set context_bar [im_context_bar $page_title]
 set context ""
-
 
 if {0 == $employee_id} { set employee_id [db_list emp_list "select employee_id from im_employees"] }
 
@@ -134,7 +154,7 @@ if {"" == $end_date} {
 set customer_url "/intranet/companies/view?customer_id="
 set project_url "/intranet/projects/view?project_id="
 set user_url "/intranet/users/view?user_id="
-set this_url [export_vars -base "/intranet-reporting/budget-all-projects-and-tasks" {start_date end_date} ]
+set this_url [export_vars -base "/intranet-reporting/logged-units-vs-planned-units" {start_date end_date} ]
 set current_url [im_url_with_query]
 
 # ------------------------------------------------------------
@@ -147,10 +167,12 @@ if {"" != $project_id && 0 != $project_id} {
 if {"" != $customer_id && 0 != $customer_id} {
     lappend criteria "p.company_id = :customer_id"
 }
+if {"" != $project_status_id && 0 != $project_status_id} {
+    lappend criteria "p.project_status_id = :project_status_id"
+}
+
 set where_clause [join $criteria "\n\tand "]
 if {"" != $where_clause} { set where_clause "and $where_clause" }
-
-
 
 # ------------------------------------------------------------
 # Calculate the transitive superprojs for projects, that is
@@ -226,8 +248,6 @@ while {[llength $incomplete_projects] > 0} {
 }
 
 
-
-
 # ------------------------------------------------------------
 # Calculate the transitive closures of sub-projects
 # That's easy, because we have already the transitive closure of
@@ -245,9 +265,6 @@ foreach project [array names project_parents] {
     }
 }
 
-
-
-
 # ------------------------------------------------------------
 # Calculate the sum of hours per project and user
 # and store the result in a hash array.
@@ -263,7 +280,7 @@ if {"" != $hours_where} { set hours_where "and $hours_where" }
 set hours_sql "
 	SELECT 	h.project_id as hours_project_id,
 		h.user_id,
-		SUM(hours) AS logged_hours,
+		sum(hours) AS logged_hours,
 		im_name_from_user_id(h.user_id) AS name
 	FROM	im_hours h
 	WHERE	1=1
@@ -272,8 +289,8 @@ set hours_sql "
 			from	group_distinct_member_map
 			where	group_id = [im_employee_group_id]
 		)
-		and h.day >= to_date(:start_date::timestamptz, 'YYYY-MM-DD')
-		and h.day < to_date(:end_date::timestamptz, 'YYYY-MM-DD')
+		and h.day >= :start_date::timestamptz
+		and h.day < :end_date::timestamptz
 		$hours_where
 	GROUP BY 
 		h.project_id, h.user_id
@@ -283,22 +300,27 @@ set hours_sql "
 array set users {}
 array set project_hours {}
 
-db_foreach hours $hours_sql {
-    set users($user_id) $name
+# It had been suggested to remove this information from the report 
+# It is available in a more user friendly form from other reports 
+# Let's keep the code in here. Data might be shown differently  
+# in another variant of this report to make the report more readable.
 
-    if { ![info exists projects($hours_project_id,$user_id)] } {
-	set projects($hours_project_id,$user_id) 0
-    }
-    set projects($hours_project_id,$user_id) [expr $projects($hours_project_id,$user_id) + $logged_hours]
+# db_foreach hours $hours_sql {
+#    set users($user_id) $name
+#
+#    if { ![info exists projects($hours_project_id,$user_id)] } {
+#	set projects($hours_project_id,$user_id) 0
+#    }
+#    set projects($hours_project_id,$user_id) [expr $projects($hours_project_id,$user_id) + $logged_hours]
 
-    foreach parent_id $project_parents($hours_project_id) {
-	if { ![info exists projects($parent_id,$user_id)] } {
-	    set projects($parent_id,$user_id) 0
-	}
-	set projects($parent_id,$user_id) [expr $projects($parent_id,$user_id) + $logged_hours]
-    }
-
-}
+#    foreach parent_id $project_parents($hours_project_id) {
+#	if { ![info exists projects($parent_id,$user_id)] } {
+#	    set projects($parent_id,$user_id) 0
+#	}
+#	set projects($parent_id,$user_id) [expr $projects($parent_id,$user_id) + $logged_hours]
+#    }
+#
+# }
 
 
 # ------------------------------------------------------------
@@ -361,27 +383,54 @@ if {[lsearch $display_fields "end_date"] >= 0} {
 if {[lsearch $display_fields "reported_hours_cache"] >= 0} {
     lappend elements reported_hours_cache
     lappend elements {
-	label "Total Hours<br>logged" 
+	label "Total Units<br>logged" 
 	display_template { @project_list.reported_hours_cache@ }
          html "align center"
     }
 }
 
-if {[lsearch $display_fields "sum_planned_hours"] >= 0} {
-    lappend elements sum_planned_hours
+if {[lsearch $display_fields "sum_reported_units"] >= 0} {
+    lappend elements sum_reported_units
+    lappend elements {
+        label "Reported<br>Units"
+        display_template { @project_list.sum_reported_units@ }
+        html "align center"
+    }
+}
+
+if {[lsearch $display_fields "sum_planned_units"] >= 0} {
+    lappend elements sum_planned_units
     lappend elements {
         label "Planned<br>Units"
-        display_template { @project_list.sum_planned_hours@ }
+        display_template { @project_list.sum_planned_units@ }
 	html "align center"
     }
 }
 
-lappend elements balance
+if {[lsearch $display_fields "sum_billable_units"] >= 0} {
+    lappend elements sum_billable_units
+    lappend elements {
+        label "Billable<br>Units"
+        display_template { @project_list.sum_billable_units@ }
+        html "align center"
+    }
+}
+
+lappend elements balance_rep_plan
 lappend elements {
-       label "Balance"
-       display_template {<if @project_list.balance@ le 0><b><div style='color:red'>@project_list.balance@</div></b></if><else><b><div>@project_list.balance@</div></b></else>}
+       label "Balance<br/>Reported Units/Planned Units"
+       display_template {<if @project_list.balance_rep_plan@ lt 0><b><div style='color:red'>@project_list.balance_rep_plan@</div></b></if><else><b><div>@project_list.balance_rep_plan@</div></b></else>}
        html "align center"
 }
+
+lappend elements balance_rep_bill
+lappend elements {
+       label "Balance<br/>Reported Units/Billable Units"
+    display_template {<if @project_list.balance_rep_bill@ lt 0><b><div style='color:red'>@project_list.balance_rep_bill@</div></b></if><else><b><div>@project_list.balance_rep_bill@</div></b></else>}
+       html "align center"
+}
+
+
 
 # Extend the "elements" list definition by the number of users who logged hours
 foreach user_id [array names users] {
@@ -389,7 +438,6 @@ foreach user_id [array names users] {
     lappend elements "user_$user_id"
     lappend elements [list label $users($user_id) html "align right"]
 }
-
 
 # ------------------------------------------------------------
 
@@ -458,7 +506,13 @@ db_multirow -extend {level_spacer open_gif} project_list project_list "
                         )
                         and uom_id = 328
                 ) as sum_planned_weeks,
-		(select sum(planned_units) from im_timesheet_tasks where task_id in (
+
+                (select
+                        sum(billable_units)
+                from
+                        im_timesheet_tasks
+                where
+                        task_id in (
                                 select
                                         p_child.project_id
                                 from
@@ -468,7 +522,47 @@ db_multirow -extend {level_spacer open_gif} project_list project_list "
                                         p_child.tree_sortkey between p_parent.tree_sortkey and tree_right(p_parent.tree_sortkey)
                                         and p_parent.project_id = child.project_id
                         )
-                ) - child.reported_hours_cache as balance
+                        and uom_id = 320
+                ) as sum_billable_hours,
+                (select
+                        sum(billable_units)
+                from
+                        im_timesheet_tasks
+                where
+                        task_id in (
+                                select
+                                        p_child.project_id
+                                from
+                                        im_projects p_parent,
+                                        im_projects p_child
+                                where
+                                        p_child.tree_sortkey between p_parent.tree_sortkey and tree_right(p_parent.tree_sortkey)
+                                        and p_parent.project_id = child.project_id
+                        )
+                        and uom_id = 321
+                ) as sum_billable_days,
+                (select
+                        sum(billable_units)
+                from
+                        im_timesheet_tasks
+                where
+                        task_id in (
+                                select
+                                        p_child.project_id
+                                from
+                                        im_projects p_parent,
+                                        im_projects p_child
+                                where
+                                        p_child.tree_sortkey between p_parent.tree_sortkey and tree_right(p_parent.tree_sortkey)
+                                        and p_parent.project_id = child.project_id
+                        )
+                        and uom_id = 328
+                ) as sum_billable_weeks, 
+		0 as balance_rep_plan,
+		0 as balance_rep_bill,
+		0 as sum_planned_units,
+		0 as sum_billable_units,
+		0 as sum_reported_units
 	from	
 		im_projects p,
 		im_companies c,
@@ -528,29 +622,81 @@ multirow_sort_tree project_list child_id parent_id project_name
 
 set out ""
 set i 1
+
+set sum_planned_hours 0 
+set sum_billable_hours 0
+set sum_planned_units 0
+set sum_billable_units 0
+
 template::multirow foreach project_list {
 
-    foreach user_id [array names users] {
-	if { [info exists projects($child_id,$user_id)] } {
-	    set hours $projects($child_id,$user_id)
-	} else {
-	    set hours ""
-	}
-	template::multirow set project_list $i "user_$user_id" $hours
-    }
+    if { "" == $reported_hours_cache } { set reported_hours_cache 0 }    
+
+    # foreach user_id [array names users] {
+    #	if { [info exists projects($child_id,$user_id)] } {
+    #	    set hours [expr $projects($child_id,$user_id)]
+    #	} else {
+    #	    set hours ""
+    #	}
+    #	template::multirow set project_list $i "user_$user_id" $hours
+    # }
+
+    # Days to hours 
     if { "" != $sum_planned_days } {
 	set sum_planned_hours [expr $sum_planned_hours + [expr $sum_planned_days * $hours_per_day]]
     }
     if { "" != $sum_planned_weeks } {
         set sum_planned_hours [expr $sum_planned_hours + [expr $sum_planned_weeks * 5 * $hours_per_day]]
     }
+
+    # Weeks to hours 
+    if { "" != $sum_billable_days } {
+        set sum_billable_hours [expr $sum_billable_hours + [expr $sum_billable_days * $hours_per_day]]
+    }
+    if { "" != $sum_billable_weeks } {
+        set sum_billable_hours [expr $sum_billable_hours + [expr $sum_billable_weeks * 5 * $hours_per_day]]
+    }
+
+    # Check for empty 
+    if { "" == $sum_planned_hours } { set sum_planned_hours 0 }
+    if { "" == $sum_billable_hours } { set sum_billable_hours 0 }
+
+    # Now from hours to target unit 
+    if { $uom_id == $uom_hour_id } {
+	set sum_planned_units $sum_planned_hours
+	set sum_billable_units $sum_billable_hours	
+	set sum_reported_units $reported_hours_cache
+    } elseif {$uom_id == $uom_day_id} {
+	set sum_planned_units [expr $sum_planned_hours / $hours_per_day]
+	set sum_billable_units [expr $sum_billable_hours / $hours_per_day]
+	set sum_reported_units [expr $reported_hours_cache / $hours_per_day]
+    } elseif { $uom_id == $uom_week_id} {
+	set sum_planned_units [expr [expr $sum_planned_hours / $hours_per_day] / 5]
+	set sum_billable_units [expr [expr $sum_billable_hours / $hours_per_day] /5]
+	set sum_reported_units [expr [expr $reported_hours_cache / $hours_per_day] /5]
+    } else {
+	    ad_return_complaint 1 "Unit of Measure '$uom_id' not supported by this report. Supported are: $uom_hour_id, $uom_day_id, $uom_week_id"
+    }
+
+    if { "" == $sum_planned_units } { set sum_planned_units 0 }
+    if { "" == $sum_reported_units } { set sum_reported_units 0 }
+
+    set balance_rep_plan [expr $sum_planned_units - $sum_reported_units]
+	set balance_rep_bill [expr $sum_billable_units - $sum_reported_units]
+
+    # Formatting 
+    set sum_planned_units [lc_numeric [im_numeric_add_trailing_zeros [expr $sum_planned_units+0] $rounding_precision] $format_string $locale]
+    set sum_billable_units [lc_numeric [im_numeric_add_trailing_zeros [expr $sum_billable_units+0] $rounding_precision] $format_string $locale]
+    set sum_reported_units [lc_numeric [im_numeric_add_trailing_zeros [expr $sum_reported_units+0] $rounding_precision] $format_string $locale]
+    set balance_rep_plan [lc_numeric [im_numeric_add_trailing_zeros [expr $balance_rep_plan+0] $rounding_precision] $format_string $locale]
+    set balance_rep_bill [lc_numeric [im_numeric_add_trailing_zeros [expr $balance_rep_bill+0] $rounding_precision] $format_string $locale]
+
+    set reported_hours_cache [lc_numeric [im_numeric_add_trailing_zeros [expr $reported_hours_cache+0] $rounding_precision] $format_string $locale]
+    
     incr i
 }
 
 template::list::create \
     -name project_list \
     -elements $elements 
-
-
-
 
