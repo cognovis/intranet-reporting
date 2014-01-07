@@ -22,6 +22,8 @@ ad_page_contract {
     { xslt_template_id 0 }
     { odt_template_id 0 }
     { print_hour_p:multiple ""}
+    { chart_type "" }
+    { export_absences "" }
 }
 
 proc encodeXmlValue {value} {
@@ -311,7 +313,8 @@ proc im_reporting_render_odt_template {
 }
 
 # ------------------------------------------------------------
-# Security
+# Security & Defaults 
+# ------------------------------------------------------------
 
 # Label: Provides the security context for this report
 # because it identifies unquely the report's Menu and
@@ -342,10 +345,15 @@ set view_hours_all_p [im_permission $current_user_id "view_hours_all"]
 
 if {!$view_hours_all_p} { set user_id $current_user_id }
 
-
 # If project_id and task_id are set and equal, exclude task_id from sql   
 if {0 != $task_id && "" != $task_id && 0 != $project_id && "" != $project_id && $project_id == $task_id} {
     set task_id 0
+}
+
+set im_survey_installed_p [db_string get_package_id "select package_id from apm_packages where package_key = 'intranet-sencha'" -default 0]
+
+if { "chart"==$output_format && 0==$im_survey_installed_p } {
+    ad_return_complaint 1 "ExtJS libs required, please checkout and install package intranet-sencha"
 }
 
 # ------------------------------------------------------------
@@ -384,9 +392,15 @@ if {"" != $end_date && ![regexp {^[0-9][0-9][0-9][0-9]\-[0-9][0-9]\-[0-9][0-9]$}
     Expected format: 'YYYY-MM-DD'"
 }
 
-set page_title "Timesheet Report with XML/XSLT and ODT Support \[BETA\]"
+set page_title "Timesheet Customer & Project - Extended Version \[BETA\]"
 set context_bar [im_context_bar $page_title]
 set context ""
+
+switch output_format {
+    html { set page_title_adjusted [lang::message::lookup "" intranet-reporting.OutputFormatHTML "HTML"] }
+    chart { set page_title_adjusted [lang::message::lookup "" intranet-reporting.OutputFormatChart "Chart"] }
+    default { set page_title_adjusted $page_title }
+}
 
 # ------------------------------------------------------------
 # Defaults
@@ -429,17 +443,17 @@ set company_url "/intranet/companies/view?company_id="
 set project_url "/intranet/projects/view?project_id="
 set user_url "/intranet/users/view?user_id="
 set hours_url "/intranet-timesheet2/hours/one"
-set this_url [export_vars -base "/intranet-reporting/timesheet-customer-project-v2" {start_date end_date level_of_detail project_id task_id company_id user_id } ]
+set this_url [export_vars -base "/intranet-reporting/timesheet-customer-project-xml-xslt" {start_date end_date level_of_detail project_id task_id company_id user_id } ]
 
 # BaseURL for drill-down. Needs company_id, project_id, user_id, level_of_detail
-set base_url [export_vars -base "/intranet-reporting/timesheet-customer-project-v2" {start_date end_date task_id} ]
-
+set base_url [export_vars -base "/intranet-reporting/timesheet-customer-project-xml-xslt" {start_date end_date task_id} ]
 
 # ------------------------------------------------------------
 # Conditional SQL Where-Clause
 #
 
 set criteria [list]
+set criteria_absences [list]
 
 if {0 != $company_id && "" != $company_id} {
     lappend criteria "p.company_id = :company_id"
@@ -447,6 +461,7 @@ if {0 != $company_id && "" != $company_id} {
 
 if {0 != $user_id && "" != $user_id} {
     lappend criteria "h.user_id = :user_id"
+    lappend criteria_absences "cc.user_id = :user_id"
 }
 
 if {0 != $cost_center_id && "" != $cost_center_id} {
@@ -461,6 +476,16 @@ if {0 != $cost_center_id && "" != $cost_center_id} {
 			from	im_cost_centers
 			where	substring(cost_center_code, 1, :cc_code_len) = :cc_code
 		)
+    )"
+
+    lappend criteria_absences "cc.user_id in (
+                select  e.employee_id
+                from    im_employees e
+                where   e.department_id in (
+                        select  cost_center_id
+                        from    im_cost_centers
+                        where   substring(cost_center_code, 1, :cc_code_len) = :cc_code
+                )
     )"
 }
 
@@ -510,20 +535,77 @@ if { ![empty_string_p $where_clause] } {
     set where_clause " and $where_clause"
 }
 
-# ------------------------------------------------------------
-# Define the report - SQL, counters, headers and footers 
-#
+set where_clause_absences [join $criteria_absences " and\n	    "]
+if { ![empty_string_p $where_clause_absences ] } {
+    set where_clause_absences " and $where_clause_absences"
+}
+
+
+# -- ----------------------------------------------------------
+#    Set absence array
+# -- ----------------------------------------------------------
+
+set absence_list [list]
+
+if { "" != $export_absences } {
+    set sql "
+    select 
+    	 cc.user_id as active_employee_id,
+	 im_initials_from_user_id(cc.user_id) as user_initials
+    from 
+	 cc_users cc,
+         acs_rels r
+    where 
+         r.object_id_one = 463 and 
+         r.object_id_two =cc.party_id and
+         r.rel_type = 'membership_rel' and
+         cc.member_state = 'approved'
+         $where_clause_absences
+    " 
+    db_foreach active_employee_id $sql {
+	set inner_sql "select * from im_absences_get_absences_for_user_duration(:active_employee_id, :start_date, :end_date, null) AS (absence_date date, absence_type_id int, absence_id int, duration_days numeric)"
+	db_foreach r $inner_sql {
+	    
+	    # Building hash key out of julian date and user_id helps us to sort the arr/list
+	    # Please note: To achieve same sort order in all absence-type-groups all user_id's woudl need to have the same number of digits 
+	    set hash_key "${absence_type_id}.${active_employee_id}[dt_ansi_to_julian_single_arg $absence_date]"
+	    
+	    # For this report max absence for a single day is '1'  
+	    if { [info exists absence_hash($hash_key)] } {
+		# Add only when absence duration is less than one day
+		if { [lindex $absence_hash($hash_key) 0] < 1 } { 
+		    set absence_hash($hash_key) [list [expr [lindex $absence_hash($hash_key) 0] + $duration_days] "-1" $absence_date $active_employee_id $user_initials]
+		    if { [lindex $absence_hash($hash_key) 0] >= 1 } {
+			set absence_hash($hash_key) [list 1 "-1"]
+		    }
+		}
+	    } else {
+		set absence_hash($hash_key) [list $duration_days $absence_type_id $absence_date $active_employee_id $user_initials]
+	    }
+	}
+    }
+    
+    # We convert to list for tcl < 8.6 
+    set x [list]
+    foreach {k v} [array get absence_hash] { lappend x [list $k $v] }
+    set absence_list [lsort -real -index 0 $x]
+    # ns_return 1 text/html $absence_list
+}
+
+# -- ----------------------------------------------------------
+#    Define the report - SQL, counters, headers and footers 
+# -- ----------------------------------------------------------
 
 set sql "
-select
+SELECT 
 	h.note,
 	h.internal_note,
 	h.hour_id,
 	to_char(h.day, 'YYYY-MM-DD') as date_pretty,
 	to_char(h.day, 'J') as julian_date,
-	to_char(h.day, 'J')::integer - to_char(to_date(:start_date, 'YYYY-MM-DD'), 'J')::integer as date_diff,
-	to_char(coalesce(h.hours,0), :number_format) as hours,
-	to_char(h.billing_rate, :number_format) || '&nbsp;' || co.currency as billing_rate,
+	to_char(h.day, 'J')::integer - to_char(to_date( :start_date , 'YYYY-MM-DD'), 'J')::integer as date_diff,
+	to_char(coalesce(h.hours,0), :number_format ) as hours,
+	to_char(h.billing_rate, :number_format ) || '&nbsp;' || co.currency as billing_rate,
 	u.user_id,
 	im_name_from_user_id(u.user_id) as user_name,
 	im_initials_from_user_id(u.user_id) as user_initials,
@@ -539,30 +621,31 @@ select
 	c.company_id || '-' || main_p.project_id as company_project_id,
 	c.company_id || '-' || main_p.project_id || '-' || p.project_id as company_project_sub_id,
 	c.company_id || '-' || main_p.project_id || '-' || p.project_id || '-' || u.user_id as company_project_sub_user_id
-from
+FROM 
 	im_hours h,
 	im_projects p,
 	im_projects main_p,
 	im_companies c,
 	users u, 
 	im_costs co
-where
+WHERE 
 	h.cost_id = co.cost_id 
 	and h.project_id = p.project_id
 	and main_p.project_status_id not in ([im_project_status_deleted])
 	and h.user_id = u.user_id
 	and main_p.tree_sortkey = tree_root_key(p.tree_sortkey)
-	and h.day >= to_timestamp(:start_date, 'YYYY-MM-DD')
-	and h.day < to_timestamp(:end_date, 'YYYY-MM-DD')
+	and h.day >= to_timestamp( :start_date , 'YYYY-MM-DD' )
+	and h.day < to_timestamp( :end_date , 'YYYY-MM-DD' )
 	and main_p.company_id = c.company_id
 	$where_clause
-order by
-	c.company_path,
+
+ORDER BY 
+	company_path,
 	main_p.project_nr,
-	p.project_nr,
+	project_nr,
 	user_name,
-	p.project_nr,
-	h.day
+	project_nr,
+	day
 "
 
 set report_def [list \
@@ -750,16 +833,19 @@ if {[info exists task_id]} {
 
 # Write out HTTP header, considering CSV/MS-Excel formatting
 switch $output_format {
-	   html - csv {
-	   		im_report_write_http_headers -output_format $output_format
-	   }
+    html - csv {
+	   im_report_write_http_headers -output_format $output_format
+    }
+    chart {
+	   im_report_write_http_headers -output_format "html"
+	   ns_write "<link rel='stylesheet' href='/intranet-sencha/css/ext-all.css'  type='text/css' media='screen'>"
+	   ns_write "<script type='text/javascript' src='/intranet-sencha/js/ext-all-debug-w-comments.js'></script>"
+    }
 }
 
 set project_id $org_project_id
 
-switch $output_format {
-    html {
-	ns_write "
+set sidebar_html "
 	[im_header $page_title]
 	[im_navbar reporting]
 	<form method='POST'>
@@ -802,10 +888,11 @@ switch $output_format {
 		    [im_project_select -include_empty_p 1 -exclude_subprojects_p 0 -include_empty_name [lang::message::lookup "" intranet-core.All "All"] project_id $project_id]
 		  </td>
 		</tr>
-	"
+
+"
 
 	if {$view_hours_all_p} {
-	    ns_write "
+	    append sidebar_html "
 		<tr>
 		  <td class=form-label>User's Department</td>
 		  <td class=form-widget>
@@ -829,47 +916,83 @@ switch $output_format {
 	    "
 	}
 
-	ns_write "
+
+if { ![info exists locale] || "" == $locale} { set locale [lang::user::locale] }
+set html_checked ""
+set excel_checked ""
+set csv_checked ""
+set xml_checked ""
+set template_checked ""
+set chart_checked ""
+set chart_type_pie_customer_checked ""
+set chart_type_pie_project_type_checked "" 
+set export_absences_checked ""
+
+set template_row_visibility "row_hidden"
+set chart_row_visibility "row_hidden"
+set absence_row_visibility "row_hidden"
+switch $output_format {
+    html - printer { 
+	set html_checked "checked" 
+        set absence_row_visibility "row_visible"
+    }
+    excel { set excel_checked "checked" }
+    csv { 
+	set csv_checked "checked" 
+        set absence_row_visibility "row_visible"
+    }
+    xml { set xml_checked "checked" }
+    template { 
+	set template_checked "checked" 
+	set template_row_visibility "row_visible"
+    }
+    chart { 
+	set chart_checked "checked"
+	set chart_row_visibility "row_visible"
+    }
+}
+
+if { "" != $export_absences } { set export_absences_checked "checked" }
+
+switch chart_type {
+    chart_type_pie_customer { set chart_type_pie_customer_checked "checked" }
+    chart_type_pie_project_type { set chart_type_pie_project_type_checked "checked" }
+}
+
+append sidebar_html "
 		$report_options_html
-
 		<tr>
-		  <td class=form-label>Format</td>
+		  <td class=form-label>[lang::message::lookup "" intranet-reporting.Format "Format"]</td>
 		  <td class=form-widget>
-	"
-
-		if { ![info exists locale] || "" == $locale} { 
-			set locale [lang::user::locale] 
-		}
-		set html_checked ""
-		set excel_checked ""
-		set csv_checked ""
-		set xml_checked ""
-		set template_checked ""
-		switch $output_format {
-			html - printer { set html_checked "checked" }
-			excel { set excel_checked "checked" }
-			csv { set csv_checked "checked" }
-			xml { set xml_checked "checked" }
-			template { set template_checked "checked" }
-		}
-
-	ns_write "
-    	    	<input name='output_format' type=radio value='html' $html_checked>HTML<br>
-	   			<input name='output_format' type=radio value='csv' $csv_checked>CSV<br>
-	   			<input name='output_format' type=radio value='xml' $xml_checked>XML<br>
-	   			<input name='output_format' type=radio value='template' $template_checked>Template
+		    	    	<input name='output_format' type=radio value='html' $html_checked onclick='handleClick(this);'>HTML<br>
+	   			<input name='output_format' type=radio value='csv' $csv_checked onclick='handleClick(this);'>CSV<br>
+	   			<input name='output_format' type=radio value='xml' $xml_checked onclick='handleClick(this);'>XML<br>
+	   			<input name='output_format' type=radio value='template' $template_checked onclick='handleClick(this);'>[lang::message::lookup "" intranet-reporting.Template "Template"]<br/>
+	   			<input name='output_format' type=radio value='chart' $chart_checked onclick='handleClick(this);'>[lang::message::lookup "" intranet-reporting.Chart "Chart"]
 		  </td>
 		</tr>
-    <tr>
-          <td class=form-label>XSLT Filter</td>
+    <tr class='$absence_row_visibility' id='absences'>
+          <td class=form-label> [lang::message::lookup "" intranet-reporting.ExportAbsences "Show Absences"]</td>
+          <td class=form-widget><input type='checkbox' name='export_absences' $export_absences_checked></td>
+    </tr>
+    <tr class='$template_row_visibility' id='xslt_template'>
+          <td class=form-label> [lang::message::lookup "" intranet-reporting.XSLTFilter "XSLT Filter"]</td>
           <td class=form-widget>[im_category_select -include_empty_p 1 -include_empty_name [lang::message::lookup "" intranet-core.Please_Select "Please select"] -translate_p 0 "Intranet Cost Template" "xslt_template_id" $xslt_template_id]</td>
     </tr>
-    <tr>
-          <td class=form-label>ODT Template</td>
+    <tr class='$template_row_visibility' id='odt_template'>
+          <td class=form-label> [lang::message::lookup "" intranet-reporting.ODTTemplate "ODT Template"]</td>
           <td class=form-widget>[im_category_select -include_empty_p 1  -include_empty_name [lang::message::lookup "" intranet-core.Please_Select "Please select"] -translate_p 0 "Intranet Cost Template" "odt_template_id" $odt_template_id]</td>
     </tr>	
-
-	<tr>
+    <tr class='$chart_row_visibility' id='chart_type'>
+          <td class=form-label> [lang::message::lookup "" intranet-core.ChartType "Chart Type"]</td>
+          <td class=form-widget>
+<select name='chart_type'>
+<option value='chart_type_pie_customer' $chart_type_pie_customer_checked> [lang::message::lookup "" intranet-reporting.ChartPieCustomer "Pie - Customer"]</option>
+<option value='chart_type_pie_project_type' $chart_type_pie_project_type_checked> [lang::message::lookup "" intranet-reporting.ChartPieProjectType "Pie - Project Type"]</option>
+</select>
+		</td>
+    </tr>	
+    <tr>
 		  <td class=form-label></td>
 		  <td class=form-widget><input type=submit value=Submit></td>
 		</tr>
@@ -883,11 +1006,57 @@ switch $output_format {
     </div> <!-- /filter-list -->
     </div> <!-- /slave-content -->
     </div> <!-- /slave -->
- 
-	<div id=\"fullwidth-list\" class=\"fullwidth-list\">
-	[im_box_header $page_title]
 
-	<table border=0 cellspacing='2' cellpadding='2' class='table_list_simple'>\n"
+
+<script type='text/javascript'>
+function handleClick(myRadio) \{
+
+	if (\"html\" == myRadio.value) \{
+	   document.getElementById('absences').className = document.getElementById('absences').className.replace('row_hidden', 'row_visible');
+	   document.getElementById('chart_type').className = document.getElementById('chart_type').className.replace('row_visible', 'row_hidden');
+           document.getElementById('odt_template').className = document.getElementById('odt_template').className.replace('row_visible', 'row_hidden');
+           document.getElementById('xslt_template').className = document.getElementById('xslt_template').className.replace('row_visible', 'row_hidden');
+	\} 
+
+	if (\"csv\" == myRadio.value) \{
+	   document.getElementById('absences').className = document.getElementById('absences').className.replace('row_hidden', 'row_visible');
+	   document.getElementById('chart_type').className = document.getElementById('chart_type').className.replace('row_visible', 'row_hidden');
+           document.getElementById('odt_template').className = document.getElementById('odt_template').className.replace('row_visible', 'row_hidden');
+           document.getElementById('xslt_template').className = document.getElementById('xslt_template').className.replace('row_visible', 'row_hidden');
+	\};
+
+	if (\"xml\" == myRadio.value) \{
+	   document.getElementById('absences').className = document.getElementById('absences').className.replace('row_visible', 'row_hidden');
+	   document.getElementById('chart_type').className = document.getElementById('chart_type').className.replace('row_visible', 'row_hidden');
+           document.getElementById('odt_template').className = document.getElementById('odt_template').className.replace('row_visible', 'row_hidden');
+           document.getElementById('xslt_template').className = document.getElementById('xslt_template').className.replace('row_visible', 'row_hidden');
+	\};
+
+	if (\"template\" == myRadio.value) \{
+	   document.getElementById('odt_template').className = document.getElementById('odt_template').className.replace('row_hidden', 'row_visible');
+	   document.getElementById('xslt_template').className = document.getElementById('xslt_template').className.replace('row_hidden', 'row_visible');
+	   document.getElementById('chart_type').className = document.getElementById('chart_type').className.replace('row_visible', 'row_hidden');
+	   document.getElementById('absences').className = document.getElementById('absences').className.replace('row_visible', 'row_hidden');
+	\} 
+
+	if (\"chart\" == myRadio.value) \{
+	   document.getElementById('chart_type').className = document.getElementById('chart_type').className.replace('row_hidden', 'row_visible');
+	   document.getElementById('odt_template').className = document.getElementById('odt_template').className.replace('row_visible', 'row_hidden');
+	   document.getElementById('xslt_template').className = document.getElementById('xslt_template').className.replace('row_visible', 'row_hidden');
+	   document.getElementById('absences').className = document.getElementById('absences').className.replace('row_visible', 'row_hidden');
+	\};
+\}
+</script>
+	<div id=\"fullwidth-list\" class=\"fullwidth-list\">
+     [im_box_header $page_title_adjusted]
+     <span id='chart_pie'></span> 
+"
+
+switch $output_format {
+
+    html {
+	   ns_write $sidebar_html
+	   ns_write "<table border=0 cellspacing='2' cellpadding='2' class='table_list_simple'>\n"
     }
 
     printer {
@@ -1008,9 +1177,10 @@ im_report_render_row \
 set footer_array_list [list]
 set last_value_list [list]
 set class "rowodd"
+
 db_foreach sql $sql {
 
-	# Does the user prefer to read project_name instead of project_nr? (Genedata...)
+	# Does the user prefer to read project_name instead of project_nr?
 	if {$use_project_name_p} { 
 	    set project_nr $project_name
 	    set sub_project_name [im_reporting_sub_project_name_path $sub_project_id]
@@ -1082,6 +1252,83 @@ db_foreach sql $sql {
 	}
 }
 
+#-- ------------------------------------------------------------------------------------
+#   Creating absences 
+#-- ------------------------------------------------------------------------------------
+
+foreach user_absence $absence_list {
+
+   #     $hours_user_counter 
+   #     $hours_project_sub_counter 
+   #     $hours_project_counter 
+   #     $hours_customer_counter 
+   # 
+
+    set k [lindex $user_absence 0]
+    set v [lindex $user_absence 1]
+    
+    # ds_comment "$k / $v"  
+    # ds_comment "company_project_sub_id: $company_project_sub_id"
+
+    # 0=$hours, 1=Absence Type, 2=Date, 3=user_id   
+
+    set note ""
+    set internal_note ""
+    set hour_id 0 
+    set date_pretty [lindex $v 2]
+    set julian_date "0"
+    set date_diff ""
+    set hours [lindex $v 0]
+    set hours_link $hours
+    set billing_rate 0
+    set user_id [lindex $v 3]
+    set user_name [im_name_from_user_id [lindex $v 3]]
+    set user_initials [lindex $v 4]
+    set project_id 0
+    set project_nr ""
+    set project_name "Absences"
+    set sub_project_id [lindex $v 1]
+    set sub_project_nr [im_category_from_id [lindex $v 1]]
+    set sub_project_name [im_category_from_id [lindex $v 1]]
+    set company_id 0
+    set company_nr ""
+    set company_name "Company"
+    set company_project_id 99
+    set company_project_sub_id [lindex $v 1] 
+    set company_project_sub_user_id [lindex $v 3]
+
+    im_report_display_footer \
+         -output_format $output_format \
+         -group_def $report_def \
+         -footer_array_list $footer_array_list \
+         -last_value_array_list $last_value_list \
+         -level_of_detail $level_of_detail \
+         -row_class $class \
+         -cell_class $class
+
+    im_report_update_counters -counters $counters
+    ns_log Notice "timesheet-customer-project: company_project_id=$company_project_id, val=[im_opt_val hours_project_subtotal]"
+
+    set last_value_list [im_report_render_header \
+         -output_format $output_format \
+         -group_def $report_def \
+         -last_value_array_list $last_value_list \
+         -level_of_detail $level_of_detail \
+         -row_class $class \
+         -cell_class $class
+    ]
+
+    set footer_array_list [im_report_render_footer \
+         -output_format $output_format \
+         -group_def $report_def \
+         -last_value_array_list $last_value_list \
+         -level_of_detail $level_of_detail \
+         -row_class $class \
+         -cell_class $class
+    ]
+}
+
+
 im_report_display_footer \
     -output_format $output_format \
     -group_def $report_def \
@@ -1111,7 +1358,7 @@ switch $output_format {
 	ns_write "[im_footer]\n"
     }
     printer { ns_write "</table>\n</div>\n"}
-    cvs { }
+    csv { }
     xml {
         if { "" != $xslt_template_id  } {
             set uri_xslt "$invoice_template_base_path/[im_category_from_id $xslt_template_id]"
@@ -1171,6 +1418,57 @@ switch $output_format {
 	ns_set cput $outputheaders "Content-Disposition" "attachment; filename=timesheet-customer-project.$suffix"
 	ns_returnfile 200 application/odt $odt_zip
     }
+    chart {
+	   # These var values we need to wrap into ''
+	   set str_vars_list [list]
+	   lappend str_vars_list start_date
+	   lappend str_vars_list end_date
+        lappend str_vars_list number_format
+
+	   # replace colon vars with their values
+	   split $sql " "
+	   foreach sub_str $sql {
+		  if { -1 != [string first : $sub_str] } {
+			 if { -1 == [string first :: $sub_str] } {
+				set var_name [string range $sub_str 1 end]  
+				eval set str_r $$var_name
+				if { -1 == [lsearch -glob $str_vars_list $var_name] } {
+				    lappend parsed_sql $str_r 
+				} else {
+				    lappend parsed_sql "'$str_r'" 
+				}	   
+			 } else {
+				lappend parsed_sql $sub_str
+			 }
+		  } else {
+			 lappend parsed_sql $sub_str
+		  }
+    	   }
+
+	   set parsed_sql [join $parsed_sql " "]
+
+	   # set rand_key [ad_generate_random_string 256]
+	   # set sql_rep "
+	   #	   insert into im_cached_reports (user_id, rand_key, report_label, request_timestamp, report_sql) values (:current_user_id, :rand_key, 'reporting-timesheet-customer-project-xml-xslt', now(), :parsed_sql)
+        # "	   
+	   # set query_id [db_dml insert_report $sql_rep]
+
+	   ns_write $sidebar_html
+        ns_write "[im_box_footer]</div></form>"
+
+	   # Call template to generate JS that creates chart 
+	   # set params [list [list current_user_id $current_user_id] [list query_id $query_id] [list rand_key $rand_key] [list chart_type $chart_type] [list mode del] [sql $parsed_sql]]
+	   set params [list [list current_user_id $current_user_id] [list chart_type $chart_type] [list mode del] [list sql $parsed_sql] [list chart_type $chart_type]]
+	   ns_write [ad_parse_template -params $params "/packages/intranet-reporting/lib/create-ts-chart"]
+        ns_write "[im_footer]\n"
+
+        # Todo: Verify how to include div id "monitor_frame" to make following js obsolete
+        ns_write "<script language='javascript' type='text/javascript'>"
+        ns_write "document.getElementById('slave_content').style.visibility='visible';"
+        ns_write "document.getElementById('fullwidth-list').style.visibility='visible';" 
+        ns_write "</script>"
+    }
+
     default {
 	ad_return_complaint 1 "Error: No template defined"
     }
