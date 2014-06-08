@@ -1,6 +1,6 @@
 # /packages/intranet-reporting/www/timesheet-customer-project-xml-xslt.tcl
 #
-# Copyright (C) 2003 - 2013 ]project-open[
+# Copyright (C) 2003-now Project Open Business Solutions S.L. 
 #
 # All rights reserved. Please check
 # http://www.project-open.com/ for licensing details.
@@ -217,6 +217,7 @@ proc im_reporting_render_odt_template {
     # Now adjusting any formular 
     # -------------------------------------------------------------------
     set has_attr_form_p 0
+
     if { "" != $odt_template_formular_row_node } {
 	foreach cell_node [$odt_template_formular_row_node childNodes] {
 	    set has_attr_form_p [$cell_node hasAttribute "table:formula"]
@@ -834,7 +835,7 @@ if {[info exists task_id]} {
 # Write out HTTP header, considering CSV/MS-Excel formatting
 switch $output_format {
     html - csv {
-	   im_report_write_http_headers -output_format $output_format
+	   im_report_write_http_headers -output_format $output_format -report_name "timesheet-customer-project-xml-xslt"
     }
     chart {
 	   im_report_write_http_headers -output_format "html"
@@ -1377,7 +1378,8 @@ switch $output_format {
             close $fo
 
             # Perform transition
-            exec java -jar $path_saxon -s:$uri_report_default_xml -xsl:$uri_xslt -o:$uri_report_custom_xml ns_returnfile 200 text/xml $uri_report_custom_xml
+            exec java -jar $path_saxon -s:$uri_report_default_xml -xsl:$uri_xslt -o:$uri_report_custom_xml 
+	    ns_returnfile 200 text/xml $uri_report_custom_xml
 
 	} else {
             # In case no transition file has been assigned we return the default XML file

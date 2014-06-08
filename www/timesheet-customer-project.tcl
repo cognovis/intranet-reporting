@@ -511,7 +511,7 @@ switch $output_format {
 	<div class=\"filter\">
 	<div class=\"filter-block\">
 
-$filter_html
+        $filter_html
 
 	</div>
 	</div>
