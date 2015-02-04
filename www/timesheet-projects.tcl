@@ -70,17 +70,6 @@ if {"" == $end_date} {
     set end_date [db_string current_month "select to_char(sysdate + interval '1 week',:date_format) from dual"]
 }
 
-# ---------------------------------------------------------------
-# This report only offers users and projects
-# Redirect to a user only report if no projects are given
-# ---------------------------------------------------------------
-
-if {$filter_project_id eq "" && $detail_level eq "single"} {
-#    ad_returnredirect [export_vars -base "/intranet-reporting/timesheet-incomplete-days" -url {start_date end_date cost_center_id}]
-    set detail_level "summary"
-}
-
-
 # Get the first and last month
 set start_month [db_string start_month "select to_char(to_date(:start_date,'YYYY-MM-DD'),'YYMM') from dual"]
 set end_month [db_string end_month "select to_char(to_date(:end_date,'YYYY-MM-DD'),'YYMM') from dual"]
@@ -310,7 +299,7 @@ set table_header_html $view_arr(table_header_html)
 
 
 foreach timescale_header $timescale_headers {
-    append table_header_html "<td class=rowtitle>$timescale_header</td>"
+    append table_header_html "<td class=rowtitle align='center'>$timescale_header</td>"
     # for XLS output
     if {"percentage" == $dimension} {
     append __column_defs "<table:table-column table:style-name=\"co2\" table:default-cell-style-name=\"ce6\"/>\n"
@@ -441,20 +430,24 @@ if {$approved_only_p && [apm_package_installed_p "intranet-timesheet2-workflow"]
 
 # Approved comes from the category type "Intranet Timesheet Conf Status"
 if {$approved_only_p && [apm_package_installed_p "intranet-timesheet2-workflow"]} {
-    set hours_sql "select sum(hours) as total, to_char(day,'YYMM') as month, user_id
+    set hours_sql "select sum(hours) as total, $timescale_sql as timescale_header, user_id
 	from im_hours, im_timesheet_conf_objects tco
         where tco.conf_id = im_hours.conf_object_id and tco.conf_status_id = 17010
-	group by user_id, month"
+        and day >= :start_date
+        and day <= :end_date
+	group by user_id, timescale_header"
 } else {
-    set hours_sql "select sum(hours) as total, to_char(day,'YYMM') as month, user_id
+    set hours_sql "select sum(hours) as total, $timescale_sql as timescale_header, user_id
 	from im_hours
-	group by user_id, month"
+	where day >= :start_date
+	and day <= :end_date
+	group by user_id, timescale_header"
 }
 
 if {"percentage" == $dimension} {
     db_foreach logged_hours $hours_sql {
-        	if {$user_id != "" && $month != ""} {
-	       set user_hours_${month}_${user_id} $total
+        	if {$user_id != "" && $timescale_header != ""} {
+	       set user_hours_${timescale_header}_${user_id} $total
 	   }
     }
 }
@@ -488,6 +481,12 @@ foreach project_id $project_ids {
             set $var $sum_hours
         }        
     }    
+}
+
+
+# At this point it does not make sense to display absences in percentages
+if {$with_absences_p eq 1 && $dimension eq "percentage"} {
+    set with_absences_p 0
 }
 
 if {$with_absences_p == 1 && [lsearch $project_ids 1]<0} {
@@ -548,8 +547,8 @@ foreach user_id $user_list {
                         set $var "0"
                     }
                 } else {
-                    set $var $sum_hours
-                }        
+                    set $var [im_numeric_add_trailing_zeros $sum_hours 2]
+                }
             }
         }
     }
@@ -631,16 +630,16 @@ foreach user_id $user_list {
                     if {[info exists $absence_var]} {
                         set value [expr $value + [set $absence_var]]
                     }
-                    append table_body_html "<td>${value}</td>"
+                    append table_body_html "<td align='right'>${value}</td>"
                     append __output "<table:table-cell office:value-type=\"float\" office:value=\"$value\"></table:table-cell>"
                 } else {
                     if {"percentage" == $dimension} {
                         if {$value == ""} {set value 0}
-                        append table_body_html "<td>${value}%</td>"
+                        append table_body_html "<td align='right'>${value}%</td>"
                         set xls_value [expr $value / 100.0]
                         append __output "<table:table-cell office:value-type=\"percentage\" office:value=\"$xls_value\"></table:table-cell>"
                     } else {
-                        append table_body_html "<td>${value}</td>"
+                        append table_body_html "<td align='right'>${value}</td>"
                         append __output "<table:table-cell office:value-type=\"float\" office:value=\"$value\"></table:table-cell>"
                     }
                 }
@@ -674,7 +673,7 @@ if {"xls" == $display_type} {
 # Display the name of the users which are not included in the list
 # ---------------------------------------------------------------
 
-set hidden_users_html "<ul>"
+set hidden_users_html "<h2>[_ intranet-reporting.users_without_logged_hours]</h2><ul>"
 set hidden_user_ids [list]
 
 foreach user_id $user_list {
@@ -684,7 +683,7 @@ foreach user_id $user_list {
 }
 
 if {[llength $hidden_user_ids]>0} {
-    db_foreach hidden_users "select user_id,im_name_from_user_id(user_id, $name_order) as user_name from users where user_id in ([template::util::tcl_to_sql_list $hidden_user_ids]) order by user_name" {
+    db_foreach hidden_users "select employee_id,im_name_from_user_id(employee_id, $name_order) as user_name from im_employees where employee_id in ([template::util::tcl_to_sql_list $hidden_user_ids]) and employee_status_id = [im_employee_status_active] order by user_name" {
         set hidden_user_url [export_vars -base "/intranet/users/view" -url {user_id}]
         append hidden_users_html "<li><a href='$hidden_user_url'>$user_name</li>"
     }
