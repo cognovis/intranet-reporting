@@ -384,7 +384,6 @@ switch $detail_level {
             set project_ids [db_list project_ids "select project_id from im_projects where parent_id is null and project_type_id not in (100,101) and project_id in ([template::util::tcl_to_sql_list [im_parent_projects -project_ids $project_ids]])"]
         } else {
             set project_ids [db_list project_ids "select project_id from im_projects where parent_id = :filter_project_id and project_type_id not in (100,101)"]
-            if {$project_ids eq ""} {set project_ids $filter_project_id}
         }
     }
     detailed {
@@ -481,6 +480,66 @@ foreach project_id $project_ids {
             set $var $sum_hours
         }        
     }    
+}
+
+# ---------------------------------------------------------------
+# Add the filter project in detail mode
+# We sadly have to copy / paste code to make this work
+# ---------------------------------------------------------------
+
+if {$detail_level eq "summary" && $filter_project_id ne ""} {
+
+    set subproject_sql "and project_id in (	
+        select p.project_id
+        from im_projects p
+        where parent_id = :filter_project_id
+        and p.project_status_id not in (82)
+        and p.project_type_id in (100,101)
+        UNION select :filter_project_id from dual
+    )"
+    
+    # Approved comes from the category type "Intranet Timesheet Conf Status"
+    if {$approved_only_p && [apm_package_installed_p "intranet-timesheet2-workflow"]} {
+        set timescale_value_sql "select sum(hours) as sum_hours,$timescale_sql as timescale_header, user_id
+                                from im_hours, im_timesheet_conf_objects tco
+                                where tco.conf_id = im_hours.conf_object_id and tco.conf_status_id = 17010
+                                $subproject_sql
+                                and day >= :start_date
+                                and day <= :end_date
+                                group by user_id,timescale_header
+                                order by user_id,timescale_header
+                              "
+    } else {
+        set timescale_value_sql "select sum(hours) as sum_hours,$timescale_sql as timescale_header,user_id
+                                 from im_hours
+                                 where day >= :start_date
+                                and day <= :end_date
+                                $subproject_sql
+                                group by user_id,timescale_header
+                                order by user_id,timescale_header
+                              "
+    }
+    
+    db_foreach timescale_info $timescale_value_sql {
+        set project_hours(${user_id}-$filter_project_id) $sum_hours
+        set var ${user_id}_${filter_project_id}($timescale_header)
+        if {"percentage" == $dimension} {
+            if {[info exists user_hours_${timescale_header}_$user_id]} {
+                set total [set user_hours_${timescale_header}_$user_id]
+            } else {
+                set total 0
+            }
+            if {0 < $total} {
+                set $var "[expr round($sum_hours / $total *100)]"
+            } else {
+                set $var "0"
+            }
+        } else {
+            set $var $sum_hours
+        }        
+    }
+    
+    lappend project_ids $filter_project_id
 }
 
 
