@@ -228,6 +228,10 @@ if {[string length $start_day] eq 1 } {
 set start_date "${start_year}-${start_month}-${start_day}"
 set current_date $start_date
 
+ # Set the timescale to daily in case you are not looking at a department
+ # This is for data protection reasons
+ if {$timescale eq "daily" && $cost_center_id eq ""} {set timescale "weekly"}
+ 
 switch $timescale {
     daily {
         while {$current_date<=$end_date} {
