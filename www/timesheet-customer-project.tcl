@@ -431,8 +431,6 @@ ad_form \
     -export {invoice_id} \
     -form {
 	{level_of_detail:text(select) {label "Level of Details"} {options $levels} {value $level_of_detail}}
-	{start_date:text(text) {label "[_ intranet-timesheet2.Start_Date]"} {value "$start_date"} {html {size 10}} {after_html {<input type="button" style="height:20px; width:20px; background: url('/resources/acs-templating/calendar.gif');" onclick ="return showCalendar('start_date', 'y-m-d');" >}}}
-	{end_date:text(text) {label "[_ intranet-timesheet2.End_Date]"} {value "$end_date"} {html {size 10}} {after_html {<input type="button" style="height:20px; width:20px; background: url('/resources/acs-templating/calendar.gif');" onclick ="return showCalendar('end_date', 'y-m-d');" >}}}
 	{company_id:text(select),optional {label \#intranet-core.Customer\#} {options $company_options} {value $company_id}}
         {project_id:text(select),optional {label \#intranet-cost.Project\#} {options $project_options} {value $project_id}}
     }
@@ -449,6 +447,11 @@ if {$view_hours_all_p} {
         {user_id:text(select),optional {label "User"} {options $user_options} {value $user_id}}
 	{invoiced_status:text(select) {label "Invoiced Status"} {options $invoiced_status_options} {value $invoiced_status}}
     }
+}
+
+ad_form -extend -name $form_id -form {
+    {start_date:text(text) {label "[_ intranet-timesheet2.Start_Date]"} {value "$start_date"} {html {size 10}} {after_html {<input type="button" style="height:20px; width:20px; background: url('/resources/acs-templating/calendar.gif');" onclick ="return showCalendar('start_date', 'y-m-d');" >}}}
+    {end_date:text(text) {label "[_ intranet-timesheet2.End_Date]"} {value "$end_date"} {html {size 10}} {after_html {<input type="button" style="height:20px; width:20px; background: url('/resources/acs-templating/calendar.gif');" onclick ="return showCalendar('end_date', 'y-m-d');" >}}}
 }
 
 if {$level_of_detail > 3} {
