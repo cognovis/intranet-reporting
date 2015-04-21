@@ -36,11 +36,15 @@ set menu_label "reporting-timesheet-customer-project"
 
 set current_user_id [ad_maybe_redirect_for_registration]
 
-set read_p [db_string report_perms "
-	select	im_object_permission_p(m.menu_id, :current_user_id, 'read')
-	from	im_menus m
-	where	m.label = :menu_label
-" -default 'f']
+# Determine whether the current_user has read permissions. 
+set read_p [im_menu_permission -menu_label $menu_label -user_id $current_user_id]
+
+# Write out an error message if the current user doesn't have read permissions
+if {$read_p} {
+    set message "You don't have the necessary permissions to view this page"
+    ad_return_complaint 1 "<li>$message"
+    ad_script_abort
+}
 
 # Has the current user the right to edit all timesheet information?
 set edit_timesheet_p [im_permission $current_user_id "edit_hours_all"]
@@ -64,12 +68,6 @@ set date_signature_l10n [lang::message::lookup "" intranet-reporting.Date_Signat
 
 
 # ------------------------------------------------------------
-
-if {![string equal "t" $read_p]} {
-    ad_return_complaint 1 "
-    [lang::message::lookup "" intranet-reporting.You_dont_have_permissions "You don't have the necessary permissions to view this page"]"
-    return
-}
 
 db_1row invoice_details "
 	select	c.cost_name as invoice_name,

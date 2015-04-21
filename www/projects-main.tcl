@@ -37,11 +37,16 @@ set current_user_id [ad_maybe_redirect_for_registration]
 if {"" == $start_date && "" == $end_date && 0 == $project_id && 0 == $company_id && 0 == $member_id && 0 == $project_lead_id} { 
     set user_id $current_user_id 
 }
-set read_p [db_string report_perms "
-	select	im_object_permission_p(m.menu_id, :current_user_id, 'read')
-	from	im_menus m
-	where	m.label = :menu_label
-" -default "f"]
+
+# Determine whether the current_user has read permissions. 
+set read_p [im_menu_permission -menu_label $menu_label -user_id $current_user_id]
+
+# Write out an error message if the current user doesn't have read permissions
+if {$read_p} {
+    set message "You don't have the necessary permissions to view this page"
+    ad_return_complaint 1 "<li>$message"
+    ad_script_abort
+}
 
 
 # ------------------------------------------------------------
@@ -56,11 +61,7 @@ set number_format "999,999.99"
 
 # ------------------------------------------------------------
 
-if {![string equal "t" $read_p]} {
-    ad_return_complaint 1 "
-    [lang::message::lookup "" intranet-reporting.You_dont_have_permissions "You don't have the necessary permissions to view this page"]"
-    return
-}
+
 
 # Check that Start & End-Date have correct format
 if {"" != $start_date && ![regexp {[0-9][0-9][0-9][0-9]\-[0-9][0-9]\-[0-9][0-9]} $start_date]} {

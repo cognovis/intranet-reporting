@@ -30,16 +30,14 @@ set menu_label "timesheet-productivity-calendar-view-workdays-simple"
 
 set current_user_id [ad_maybe_redirect_for_registration]
 
-set read_p [db_string report_perms "
-	select	im_object_permission_p(m.menu_id, :current_user_id, 'read')
-	from	im_menus m
-	where	m.label = :menu_label
-" -default 'f']
+# Determine whether the current_user has read permissions. 
+set read_p [im_menu_permission -menu_label $menu_label -user_id $current_user_id]
 
-if {![string equal "t" $read_p]} {
-    ad_return_complaint 1 "<li>
-    [lang::message::lookup "" intranet-reporting.You_dont_have_permissions "You don't have the necessary permissions to view this page"]"
-    return
+# Write out an error message if the current user doesn't have read permissions
+if {$read_p} {
+    set message "You don't have the necessary permissions to view this page"
+    ad_return_complaint 1 "<li>$message"
+    ad_script_abort
 }
 
 set page_title [lang::message::lookup "" intranet-reporting.Timesheet_Logging_Report___Monthly_View___Simple "Timesheet Productivity Report - Monthly View - Simple"]

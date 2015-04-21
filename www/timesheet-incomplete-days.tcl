@@ -34,13 +34,10 @@ if { !$view_hours_all_p }  {
 }
 
 # Provides MENU security context for this report
-set read_p [db_string report_perms "
-	select	im_object_permission_p(m.menu_id, :current_user_id, 'read')
-	from	im_menus m
-	where	m.label = 'timesheet-incomplete-days'
-" -default 'f']
+# Determine whether the current_user has read permissions. 
+set read_p [im_menu_permission -menu_label $menu_label -user_id $current_user_id]
 
-if {![string equal "t" $read_p] && ![im_is_user_site_wide_or_intranet_admin $current_user_id]} {
+if {!$read_p && ![im_is_user_site_wide_or_intranet_admin $current_user_id]} {
     ad_return_complaint 1 "<li>
     [lang::message::lookup "" intranet-reporting.You_dont_have_permissions "You don't have the necessary permissions to view this page"]"
     return

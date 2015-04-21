@@ -32,19 +32,14 @@ set menu_label "reporting-capacity-planning"
 set current_user_id [ad_maybe_redirect_for_registration]
 
 # Determine whether the current_user has read permissions. 
-set read_p [db_string report_perms "
-	select	im_object_permission_p(m.menu_id, :current_user_id, 'read')
-	from	im_menus m
-	where	m.label = :menu_label
-" -default 'f']
+set read_p [im_menu_permission -menu_label $menu_label -user_id $current_user_id]
 
 # Write out an error message if the current user doesn't have read permissions
-if {![string equal "t" $read_p]} {
+if {$read_p} {
     set message "You don't have the necessary permissions to view this page"
     ad_return_complaint 1 "<li>$message"
     ad_script_abort
 }
-
 
 
 # ------------------------------------------------------------
