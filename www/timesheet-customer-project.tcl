@@ -47,6 +47,12 @@ if {"" == $start_date && "" == $end_date && 0 == $project_id && 0 == $company_id
 
 set read_p [im_menu_permission -menu_label $menu_label -user_id $current_user_id]
 
+if {!$read_p} {
+    ad_return_complaint 1 "
+    [lang::message::lookup "" intranet-reporting.You_dont_have_permissions "You don't have the necessary permissions to view this page"]"
+    return
+}
+
 # Has the current user the right to edit all timesheet information?
 set edit_timesheet_p [im_permission $current_user_id "add_hours_all"]
 
@@ -70,12 +76,6 @@ set number_format "999,990.99"
 
 
 # ------------------------------------------------------------
-
-if {!$read_p} {
-    ad_return_complaint 1 "
-    [lang::message::lookup "" intranet-reporting.You_dont_have_permissions "You don't have the necessary permissions to view this page"]"
-    return
-}
 
 set page_title "Timesheet Report"
 set context_bar [im_context_bar $page_title]

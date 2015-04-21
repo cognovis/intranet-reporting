@@ -57,7 +57,7 @@ set number_format "999,999.99"
 
 # ------------------------------------------------------------
 
-if {![string equal "t" $read_p]} {
+if {![string equal "t" !$read_p]} {
     ad_return_complaint 1 "
     [lang::message::lookup "" intranet-reporting.You_dont_have_permissions "You don't have the necessary permissions to view this page"]"
     return
